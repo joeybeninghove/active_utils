@@ -1,6 +1,8 @@
 module ActiveMerchant #:nodoc:
   module RequiresParameters #:nodoc:
     def requires!(hash, *params)
+      @requires = params
+
       params.each do |param|
         if param.is_a?(Array)
           raise ArgumentError.new("Missing required parameter: #{param.first}") unless hash.has_key?(param.first)
