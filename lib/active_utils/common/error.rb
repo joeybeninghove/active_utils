@@ -23,4 +23,12 @@ module ActiveMerchant #:nodoc:
 
   class ClientCertificateError < ActiveMerchantError # :nodoc
   end
+
+  class MissingParamsError < ActiveMerchantError
+    attr_reader :missing_params
+
+    def initialize(missing_params)
+      @missing_params = missing_params
+    end
+  end
 end

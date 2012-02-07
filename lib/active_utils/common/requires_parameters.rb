@@ -1,7 +1,7 @@
 module ActiveMerchant #:nodoc:
   module RequiresParameters #:nodoc:
     def requires!(hash, *params)
-      @requires = params
+      missing_params = []
 
       params.each do |param|
         if param.is_a?(Array)
@@ -10,9 +10,11 @@ module ActiveMerchant #:nodoc:
           valid_options = param[1..-1]
           raise ArgumentError.new("Parameter: #{param.first} must be one of #{valid_options.to_sentence(:words_connector => 'or')}") unless valid_options.include?(hash[param.first])
         else
-          raise ArgumentError.new("Missing required parameter: #{param}") unless hash.has_key?(param)
+          missing_params << params unless hash.has_key?(params)
         end
       end
+
+      raise MissingParamsError.new(missing_params) if missing_params.any?
     end
   end
 end
