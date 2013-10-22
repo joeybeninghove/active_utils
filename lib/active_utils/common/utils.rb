@@ -1,22 +1,20 @@
-require 'digest/md5'
+require 'securerandom'
 
 module ActiveMerchant #:nodoc:
   module Utils #:nodoc:
     def generate_unique_id
-      md5 = Digest::MD5.new
-      now = Time.now
-      md5 << now.to_s
-      md5 << String(now.usec)
-      md5 << String(rand(0))
-      md5 << String($$)
-      md5 << self.class.name
-      md5.hexdigest
+      SecureRandom.hex(16)
     end
 
     module_function :generate_unique_id
 
     def deprecated(message)
-      warn(Kernel.caller[1] + message)
+      warning = Kernel.caller[1] + message
+      if respond_to?(:logger) && logger.present?
+        logger.warn(warning)
+      else
+        warn(warning)
+      end
     end
   end
 end

@@ -5,10 +5,14 @@ require 'benchmark'
 
 module ActiveMerchant
   class Connection
+    include NetworkConnectionRetries
+
     MAX_RETRIES = 3
     OPEN_TIMEOUT = 60
     READ_TIMEOUT = 60
     VERIFY_PEER = true
+    CA_FILE = (File.dirname(__FILE__) + '/../../certs/cacert.pem')
+    CA_PATH = nil
     RETRY_SAFE = false
     RUBY_184_POST_HEADERS = { "Content-Type" => "application/x-www-form-urlencoded" }
 
@@ -16,6 +20,9 @@ module ActiveMerchant
     attr_accessor :open_timeout
     attr_accessor :read_timeout
     attr_accessor :verify_peer
+    attr_accessor :ssl_version
+    attr_accessor :ca_file
+    attr_accessor :ca_path
     attr_accessor :retry_safe
     attr_accessor :pem
     attr_accessor :pem_password
@@ -23,6 +30,7 @@ module ActiveMerchant
     attr_accessor :logger
     attr_accessor :tag
     attr_accessor :ignore_http_status
+    attr_accessor :max_retries
 
     def initialize(endpoint)
       @endpoint     = endpoint.is_a?(URI) ? endpoint : URI.parse(endpoint)
@@ -30,13 +38,19 @@ module ActiveMerchant
       @read_timeout = READ_TIMEOUT
       @retry_safe   = RETRY_SAFE
       @verify_peer  = VERIFY_PEER
+      @ca_file      = CA_FILE
+      @ca_path      = CA_PATH
+      @max_retries  = MAX_RETRIES
       @ignore_http_status = false
+      @ssl_version = nil
     end
 
     def request(method, body, headers = {})
-      retry_exceptions do
+      request_start = Time.now.to_f
+
+      retry_exceptions(:max_retries => max_retries, :logger => logger, :tag => tag) do
         begin
-          info "#{method.to_s.upcase} #{endpoint}", tag
+          info "connection_http_method=#{method.to_s.upcase} connection_uri=#{endpoint}", tag
 
           result = nil
 
@@ -65,18 +79,11 @@ module ActiveMerchant
           info "--> %d %s (%d %.4fs)" % [result.code, result.message, result.body ? result.body.length : 0, realtime], tag
           debug result.body
           result
-        rescue EOFError => e
-          raise ConnectionError, "The remote server dropped the connection"
-        rescue Errno::ECONNRESET => e
-          raise ConnectionError, "The remote server reset the connection"
-        rescue Errno::ECONNREFUSED => e
-          raise RetriableConnectionError, "The remote server refused the connection"
-        rescue OpenSSL::X509::CertificateError => e
-          raise ClientCertificateError, "The remote server did not accept the provided SSL certificate"
-        rescue Timeout::Error, Errno::ETIMEDOUT => e
-          raise ConnectionError, "The connection to the remote server timed out"
         end
       end
+
+    ensure
+      info "connection_request_total_time=%.4fs" % [Time.now.to_f - request_start], tag
     end
 
     private
@@ -102,13 +109,16 @@ module ActiveMerchant
       return unless endpoint.scheme == "https"
 
       http.use_ssl = true
+      http.ssl_version = ssl_version if ssl_version
 
       if verify_peer
         http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-        http.ca_file     = File.dirname(__FILE__) + '/../../certs/cacert.pem'
+        http.ca_file     = ca_file
+        http.ca_path     = ca_path
       else
         http.verify_mode = OpenSSL::SSL::VERIFY_NONE
       end
+
     end
 
     def configure_cert(http)
@@ -120,21 +130,6 @@ module ActiveMerchant
         http.key = OpenSSL::PKey::RSA.new(pem, pem_password)
       else
         http.key = OpenSSL::PKey::RSA.new(pem)
-      end
-    end
-
-    def retry_exceptions
-      retries = MAX_RETRIES
-      begin
-        yield
-      rescue RetriableConnectionError => e
-        retries -= 1
-        retry unless retries.zero?
-        raise ConnectionError, e.message
-      rescue ConnectionError
-        retries -= 1
-        retry if retry_safe && !retries.zero?
-        raise
       end
     end
 
@@ -157,6 +152,10 @@ module ActiveMerchant
 
     def info(message, tag = nil)
       log(:info, message, tag)
+    end
+
+    def error(message, tag = nil)
+      log(:error, message, tag)
     end
 
     def log(level, message, tag)
